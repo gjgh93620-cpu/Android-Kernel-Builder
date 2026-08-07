@@ -54,7 +54,11 @@ jobs:
       - name: "⭐ Install prerequisites"
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 libarchive-tools
+          sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 libarchive-tools gcc-9 g++-9
+          # 将 GCC 9 设为默认编译器
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 100
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 100
+          gcc --version
 
       - name: "🌟 Clone kernel source => (${{ env.kernelRepo }})"
         working-directory: ./${{ env.kernelDir }}
@@ -141,17 +145,11 @@ jobs:
 
           cat ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
 
-      - name: "🛠 Fix compiler errors for old kernel"
+      - name: "🛠 Fix defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # 1. 修复 -fstack-protector-strong 与 Clang 的兼容性问题
           sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g' arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_CC_STACKPROTECTOR=y" >> arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          
-          # 2. 修复 GCC 10+ 与 4.9 内核 DTC 编译的 yylloc 冲突
-          # 直接给 HOSTCFLAGS 全局添加 -fcommon，最简单有效
-          export HOSTCFLAGS="-fcommon"
-          echo "HOSTCFLAGS=-fcommon" >> $GITHUB_ENV
 
       - name: "👍 Make defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
