@@ -10,7 +10,7 @@ on:
 jobs:
   Set-repos:
     name: "🐂 Parse repos.json"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     outputs:
       repos: ${{ steps.generate-matrix.outputs.repos }}
     steps:
@@ -28,7 +28,7 @@ jobs:
 
   Build-Kernel:
     name: "🐎 Build kernel"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs:
       - Set-repos
     strategy:
@@ -141,11 +141,16 @@ jobs:
 
           cat ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
 
-      - name: "🛠 Fix stackprotector for Clang 11"
+      - name: "🛠 Fix compiler errors for old kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
+          # 1. 修复 -fstack-protector-strong 与 Clang 的兼容性问题
           sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g' arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_CC_STACKPROTECTOR=y" >> arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          
+          # 2. 修复 GCC 10+ 与 4.9 内核 DTC 编译的 yylloc 冲突
+          sed -i 's/YYLTYPE yylloc/extern YYLTYPE yylloc/g' scripts/dtc/dtc-lexer.l
+          sed -i 's/YYLTYPE yylloc/extern YYLTYPE yylloc/g' scripts/dtc/dtc-parser.tab.c 2>/dev/null || true
 
       - name: "👍 Make defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
