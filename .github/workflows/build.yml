@@ -1,22 +1,20 @@
 name: "Build MIX 2S Kernel"
+on:
+  workflow_dispatch:
 
 env:
   CONFIGURATION: "repos.json"
   OUT_DIR: "out"
 
-on:
-  workflow_dispatch:
-
 jobs:
   Set-repos:
-    name: "🐂 Parse repos.json"
+    name: "Parse repos.json"
     runs-on: ubuntu-22.04
     outputs:
       repos: ${{ steps.generate-matrix.outputs.repos }}
     steps:
-      - name: "😄 Checkout"
-        uses: actions/checkout@v4
-      - name: "😆 Generate Matrix"
+      - uses: actions/checkout@v4
+      - name: Generate Matrix
         id: generate-matrix
         run: |
           {
@@ -26,7 +24,7 @@ jobs:
           } >> $GITHUB_OUTPUT
 
   Build-Kernel:
-    name: "🐎 Build kernel"
+    name: "Build kernel"
     runs-on: ubuntu-22.04
     needs: Set-repos
     strategy:
@@ -43,10 +41,10 @@ jobs:
       DEFCONFIG_NAME: polaris_user_defconfig
       withKernelSU: ${{ matrix.repos.withKernelSU }}
     steps:
-      - name: "✨ Create working dir"
+      - name: Create working dir
         run: mkdir -p $kernelDir
 
-      - name: "⭐ Install prerequisites & GCC 9"
+      - name: Install prerequisites & GCC 9
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 libarchive-tools gcc-9 g++-9
@@ -54,12 +52,12 @@ jobs:
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 100
           gcc --version
 
-      - name: "🌟 Clone kernel source => (${{ env.kernelRepo }})"
+      - name: Clone kernel source
         working-directory: ./${{ env.kernelDir }}
         run: |
           git clone --recursive --branch $kernelBranch $kernelRepo $kernelName --depth=1
 
-      - name: "💫 Get toolchains"
+      - name: Get toolchains
         working-directory: ./${{ env.kernelDir }}
         env:
           toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
@@ -75,7 +73,7 @@ jobs:
           done
           echo "PATH Variable: $PATH"
 
-      - name: "😎 Set args"
+      - name: Set args
         id: generate-args
         working-directory: ./${{ env.kernelDir }}
         env:
@@ -104,30 +102,19 @@ jobs:
           if [ -n "$CC" ]; then args="$args CC=$CC"; fi
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "😋 Update KernelSU"
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        if: ${{ env.withKernelSU == 'true' }}
-        run: |
-          if [ -d "./KernelSU" ]; then rm -rf "./KernelSU"; fi
-          if [ -d "./drivers/kernelsu" ]; then rm -rf "./drivers/kernelsu"; fi
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
-          echo -e "\nCONFIG_KPROBES=y" >> ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo -e "\nCONFIG_HAVE_KPROBES=y" >> ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo -e "\nCONFIG_KPROBE_EVENTS=y" >> ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-
-      - name: "🛠 Fix defconfig"
+      - name: Fix defconfig
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
           sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g' arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_CC_STACKPROTECTOR=y" >> arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
 
-      - name: "👍 Make defconfig"
+      - name: Make defconfig
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         env:
           args: ${{ steps.generate-args.outputs.args }}
         run: make ${{ env.args }} ${{ env.DEFCONFIG_NAME }}
 
-      - name: "🎶 Build kernel & modules"
+      - name: Build kernel & modules
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         env:
           args: ${{ steps.generate-args.outputs.args }}
@@ -140,37 +127,32 @@ jobs:
 
           make ${args}
           make ${args} modules
-          echo "Modules compiled. Here are the .ko files:"
+          echo "Modules compiled:"
           find ${{ env.OUT_DIR }} -name "*.ko" -type f
 
-      - name: "📦 Package AnyKernel3"
+      - name: Package AnyKernel3
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
           set -e
 
-          # 检查内核
           if [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image ] && [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz ]; then
             echo "ERROR: No kernel image!"
             exit 1
           fi
 
-          # 下载 AnyKernel3
           wget -q https://github.com/osm0sis/AnyKernel3/archive/refs/heads/master.zip
           unzip -q master.zip
           mv AnyKernel3-master AnyKernel3
 
-          # 放入内核
           if [ -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz ]; then
             cp ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz AnyKernel3/
           else
             gzip -c ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image > AnyKernel3/Image.gz
           fi
 
-          # 处理模块
           rm -rf AnyKernel3/modules
           mkdir -p AnyKernel3/modules/vendor/lib/modules
 
-          # 复制所有 .ko 文件
           KO_COUNT=0
           while IFS= read -r -d '' ko; do
             cp -v "$ko" AnyKernel3/modules/vendor/lib/modules/
@@ -178,11 +160,7 @@ jobs:
           done < <(find ${{ env.OUT_DIR }} -name "*.ko" -type f -print0)
 
           echo "Copied ${KO_COUNT} .ko files."
-          if [ "$KO_COUNT" -eq 0 ]; then
-            echo "WARNING: No .ko files found! WiFi will not work."
-          fi
 
-          # 修改 anykernel.sh
           sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
           sed -i 's/do.modules=0/do.modules=1/' AnyKernel3/anykernel.sh
           if grep -q "^# module_dir=" AnyKernel3/anykernel.sh; then
@@ -192,7 +170,6 @@ jobs:
           fi
           sed -i 's/^dtb="dtb"/# dtb="dtb"/' AnyKernel3/anykernel.sh
 
-          # 追加手动安装模块脚本
           cat >> AnyKernel3/anykernel.sh << 'AKMOD'
 if [ -d "$home/modules/vendor" ]; then
   ui_print "Installing kernel modules...";
@@ -203,16 +180,11 @@ fi
 AKMOD
 
           cd AnyKernel3
-          zip -r ../MIX2S_Kernel_${{ env.kernelBranch }}_full.zip *
+          zip -r ../MIX2S_Kernel_${{ env.kernelBranch }}.zip *
 
-          # 显示 zip 内的 .ko 文件
-          echo "=== .ko files in zip ==="
-          unzip -l ../MIX2S_Kernel_${{ env.kernelBranch }}_full.zip | grep "\.ko"
-          echo "========================"
-
-      - name: "💛 Upload AnyKernel3 zip"
+      - name: Upload AnyKernel3 zip
         uses: actions/upload-artifact@v4
         with:
-          name: MIX2S_Kernel_${{ env.kernelBranch }}_full
-          path: ${{ env.kernelDir }}/${{ env.kernelName }}/MIX2S_Kernel_${{ env.kernelBranch }}_full.zip
+          name: MIX2S_Kernel_${{ env.kernelBranch }}
+          path: ${{ env.kernelDir }}/${{ env.kernelName }}/MIX2S_Kernel_${{ env.kernelBranch }}.zip
           retention-days: 7
