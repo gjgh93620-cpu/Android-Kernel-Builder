@@ -1,14 +1,14 @@
-name: "Build MIX 2S Kernel (Simple)"
+name: "Build MIX 2S Kernel"
 
 on:
   workflow_dispatch:
 
 jobs:
-  Build-Kernel:
+  build:
     name: "Build Kernel"
     runs-on: ubuntu-22.04
     steps:
-      - name: "Install prerequisites & GCC 9"
+      - name: Install prerequisites and GCC 9
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 libarchive-tools gcc-9 g++-9
@@ -16,23 +16,21 @@ jobs:
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 100
           gcc --version
 
-      - name: "Clone kernel source"
+      - name: Clone kernel source
         run: |
           git clone --recursive --branch dipper-q-oss https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git kernel-source --depth=1
 
-      - name: "Fix defconfig"
+      - name: Fix defconfig
         working-directory: ./kernel-source
         run: |
-          # 修复栈保护问题
           sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g' arch/arm64/configs/polaris_user_defconfig
           echo "CONFIG_CC_STACKPROTECTOR=y" >> arch/arm64/configs/polaris_user_defconfig
-          # 提交更改以去除 dirty
           git config user.email "action@github.com"
           git config user.name "GitHub Action"
           git add arch/arm64/configs/polaris_user_defconfig
           git commit -m "Fix defconfig for GCC 9" || true
 
-      - name: "Build kernel & modules"
+      - name: Build kernel and modules
         working-directory: ./kernel-source
         run: |
           export ARCH=arm64
@@ -42,62 +40,44 @@ jobs:
           make O=out -j$(nproc --all)
           make O=out -j$(nproc --all) modules
 
-      - name: "Package AnyKernel3"
+      - name: Package AnyKernel3
         working-directory: ./kernel-source
         run: |
-          set -e
-
-          # 检查内核
           if [ ! -f out/arch/arm64/boot/Image ] && [ ! -f out/arch/arm64/boot/Image.gz ]; then
-            echo "ERROR: No kernel image!"
+            echo "ERROR: No kernel image found!"
             exit 1
           fi
-
-          # 下载 AnyKernel3 模板
           wget -q https://github.com/osm0sis/AnyKernel3/archive/refs/heads/master.zip
           unzip -q master.zip
           mv AnyKernel3-master AnyKernel3
-
-          # 放入内核镜像（优先使用 Image.gz，若不存在则手动压缩）
           if [ -f out/arch/arm64/boot/Image.gz ]; then
             cp out/arch/arm64/boot/Image.gz AnyKernel3/
           else
             gzip -c out/arch/arm64/boot/Image > AnyKernel3/Image.gz
           fi
-
-          # 模块处理：直接复制所有编译出的 .ko 文件
           rm -rf AnyKernel3/modules
           mkdir -p AnyKernel3/modules/vendor/lib/modules
-          # 稳健做法：用 find 配合 while 循环，比通配符更可靠
-          find out -name "*.ko" -type f -print0 | while IFS= read -r -d '' ko; do
-            cp -v "$ko" AnyKernel3/modules/vendor/lib/modules/
-          done
-
-          # 修改 anykernel.sh 配置
+          find out -name "*.ko" -type f -exec cp {} AnyKernel3/modules/vendor/lib/modules/ \;
           sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
           sed -i 's/do.modules=0/do.modules=1/' AnyKernel3/anykernel.sh
-          # 确保 module_dir 指向正确路径
           if grep -q "^# module_dir=" AnyKernel3/anykernel.sh; then
             sed -i 's|^# module_dir=.*|module_dir=vendor/lib/modules|' AnyKernel3/anykernel.sh
           else
             echo "module_dir=vendor/lib/modules" >> AnyKernel3/anykernel.sh
           fi
           sed -i 's/^dtb="dtb"/# dtb="dtb"/' AnyKernel3/anykernel.sh
-
-          # 追加手动安装模块脚本，确保刷入
           cat >> AnyKernel3/anykernel.sh << 'AKMOD'
-if [ -d "$home/modules/vendor" ]; then
-  ui_print "Installing kernel modules...";
-  cp -rf $home/modules/vendor/lib/modules/* /vendor/lib/modules/;
-  chmod 644 /vendor/lib/modules/*.ko;
-  chown 0:0 /vendor/lib/modules/;
-fi
-AKMOD
-
+          if [ -d "$home/modules/vendor" ]; then
+            ui_print "Installing kernel modules...";
+            cp -rf $home/modules/vendor/lib/modules/* /vendor/lib/modules/;
+            chmod 644 /vendor/lib/modules/*.ko;
+            chown 0:0 /vendor/lib/modules/;
+          fi
+          AKMOD
           cd AnyKernel3
           zip -r ../MIX2S_Kernel_dipper-q-oss.zip *
 
-      - name: "Upload AnyKernel3 zip"
+      - name: Upload AnyKernel3 zip
         uses: actions/upload-artifact@v4
         with:
           name: MIX2S_Kernel_dipper-q-oss
