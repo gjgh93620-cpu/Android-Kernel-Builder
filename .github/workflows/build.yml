@@ -23,14 +23,34 @@ jobs:
       - name: Fix defconfig and commit
         working-directory: ./kernel-source
         run: |
-          # 修复栈保护问题
           sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g' arch/arm64/configs/polaris_user_defconfig
           echo "CONFIG_CC_STACKPROTECTOR=y" >> arch/arm64/configs/polaris_user_defconfig
-          # 提交更改以去除 dirty 标记
           git config user.email "action@github.com"
           git config user.name "GitHub Action"
           git add arch/arm64/configs/polaris_user_defconfig
           git commit -m "Fix defconfig for GCC 9" || true
+
+      # ===== 新增步骤：修复 gcc-wrapper.py 的 Python 版本兼容性问题 =====
+      - name: Fix gcc-wrapper.py for Python 3
+        working-directory: ./kernel-source
+        run: |
+          # 直接用真正的 gcc 替换掉这个有问题的 Python 包装器
+          # 先备份原文件，然后用一个简单的 shell 脚本替代它，直接调用 gcc
+          mv scripts/gcc-wrapper.py scripts/gcc-wrapper.py.bak
+          cat > scripts/gcc-wrapper.py << 'PYEOF'
+          #!/usr/bin/env python3
+          import subprocess
+          import sys
+          # 找到真正的 gcc 可执行文件
+          # 这个脚本本来的作用是过滤 gcc 的某些警告输出，我们直接透传所有参数给 gcc
+          # 这样可以完全避免 Python 2/3 的语法问题
+          try:
+              result = subprocess.run(['gcc'] + sys.argv[1:], capture_output=False)
+              sys.exit(result.returncode)
+          except FileNotFoundError:
+              print("Error: gcc not found", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
 
       - name: Build kernel and modules
         working-directory: ./kernel-source
@@ -38,9 +58,11 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          # 直接使用真正的 gcc，不再依赖那个有问题的 wrapper
+          export CC=gcc
           make O=out polaris_user_defconfig
-          make O=out -j$(nproc --all)
-          make O=out -j$(nproc --all) modules
+          make O=out -j$(nproc --all) CC=gcc
+          make O=out -j$(nproc --all) modules CC=gcc
 
       - name: Package AnyKernel3
         working-directory: ./kernel-source
@@ -59,9 +81,7 @@ jobs:
           fi
           rm -rf AnyKernel3/modules
           mkdir -p AnyKernel3/modules/vendor/lib/modules
-          # 复制所有编译出的 .ko 文件
           find out -name "*.ko" -type f -exec cp {} AnyKernel3/modules/vendor/lib/modules/ \;
-          # 修改 anykernel.sh 配置
           sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
           sed -i 's/do.modules=0/do.modules=1/' AnyKernel3/anykernel.sh
           if grep -q "^# module_dir=" AnyKernel3/anykernel.sh; then
@@ -70,7 +90,6 @@ jobs:
             echo "module_dir=vendor/lib/modules" >> AnyKernel3/anykernel.sh
           fi
           sed -i 's/^dtb="dtb"/# dtb="dtb"/' AnyKernel3/anykernel.sh
-          # 追加手动安装模块脚本，确保模块被刷入
           cat >> AnyKernel3/anykernel.sh << 'AKMOD'
           if [ -d "$home/modules/vendor" ]; then
             ui_print "Installing kernel modules...";
