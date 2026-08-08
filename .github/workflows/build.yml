@@ -1,4 +1,4 @@
-name: "Build MIX 2S Perfect Kernel"
+name: "Build MIX 2S Kernel (Open Source Config)"
 
 env:
   CONFIGURATION: "repos.json"
@@ -140,54 +140,47 @@ jobs:
 
           make ${args}
           make ${args} modules
-          make ${args} INSTALL_MOD_PATH="$(pwd)/modules_install" modules_install
-          echo "=== Modules installed ==="
-          ls -laR modules_install/
+          echo "Modules compiled. Here are the .ko files:"
+          find ${{ env.OUT_DIR }} -name "*.ko" -type f
 
       - name: "📦 Package AnyKernel3"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
           set -e
 
-          # 检查内核镜像
+          # 检查内核
           if [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image ] && [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz ]; then
-            echo "ERROR: No kernel image found!"
+            echo "ERROR: No kernel image!"
             exit 1
           fi
-
-          # 检查模块目录
-          MOD_DIR="modules_install/lib/modules"
-          if [ ! -d "$MOD_DIR" ]; then
-            echo "ERROR: $MOD_DIR not found!"
-            exit 1
-          fi
-          MOD_VER=$(ls "$MOD_DIR")
-          MOD_SRC="$MOD_DIR/$MOD_VER"
-          echo "Module source: $MOD_SRC"
 
           # 下载 AnyKernel3
           wget -q https://github.com/osm0sis/AnyKernel3/archive/refs/heads/master.zip
           unzip -q master.zip
           mv AnyKernel3-master AnyKernel3
 
-          # 放入内核镜像
+          # 放入内核
           if [ -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz ]; then
             cp ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz AnyKernel3/
           else
             gzip -c ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image > AnyKernel3/Image.gz
           fi
 
-          # 清空 AnyKernel3 自带的 modules，重新创建 vendor 模块目录
+          # 处理模块
           rm -rf AnyKernel3/modules
           mkdir -p AnyKernel3/modules/vendor/lib/modules
 
-          # 复制 .ko 文件和模块元数据文件，排除 build/source 等符号链接
-          find "$MOD_SRC" -maxdepth 1 -type f -name "*.ko" -exec cp {} AnyKernel3/modules/vendor/lib/modules/ \;
-          for f in modules.alias modules.dep modules.symbols modules.order modules.builtin; do
-            if [ -f "$MOD_SRC/$f" ]; then
-              cp "$MOD_SRC/$f" AnyKernel3/modules/vendor/lib/modules/
-            fi
-          done
+          # 复制所有 .ko 文件
+          KO_COUNT=0
+          while IFS= read -r -d '' ko; do
+            cp -v "$ko" AnyKernel3/modules/vendor/lib/modules/
+            ((KO_COUNT++))
+          done < <(find ${{ env.OUT_DIR }} -name "*.ko" -type f -print0)
+
+          echo "Copied ${KO_COUNT} .ko files."
+          if [ "$KO_COUNT" -eq 0 ]; then
+            echo "WARNING: No .ko files found! WiFi will not work."
+          fi
 
           # 修改 anykernel.sh
           sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
@@ -199,12 +192,27 @@ jobs:
           fi
           sed -i 's/^dtb="dtb"/# dtb="dtb"/' AnyKernel3/anykernel.sh
 
+          # 追加手动安装模块脚本
+          cat >> AnyKernel3/anykernel.sh << 'AKMOD'
+if [ -d "$home/modules/vendor" ]; then
+  ui_print "Installing kernel modules...";
+  cp -rf $home/modules/vendor/lib/modules/* /vendor/lib/modules/;
+  chmod 644 /vendor/lib/modules/*.ko;
+  chown 0:0 /vendor/lib/modules/;
+fi
+AKMOD
+
           cd AnyKernel3
-          zip -r ../MIX2S_Kernel_${{ env.kernelBranch }}_perfect.zip *
+          zip -r ../MIX2S_Kernel_${{ env.kernelBranch }}_full.zip *
+
+          # 显示 zip 内的 .ko 文件
+          echo "=== .ko files in zip ==="
+          unzip -l ../MIX2S_Kernel_${{ env.kernelBranch }}_full.zip | grep "\.ko"
+          echo "========================"
 
       - name: "💛 Upload AnyKernel3 zip"
         uses: actions/upload-artifact@v4
         with:
-          name: MIX2S_Kernel_${{ env.kernelBranch }}_perfect
-          path: ${{ env.kernelDir }}/${{ env.kernelName }}/MIX2S_Kernel_${{ env.kernelBranch }}_perfect.zip
+          name: MIX2S_Kernel_${{ env.kernelBranch }}_full
+          path: ${{ env.kernelDir }}/${{ env.kernelName }}/MIX2S_Kernel_${{ env.kernelBranch }}_full.zip
           retention-days: 7
