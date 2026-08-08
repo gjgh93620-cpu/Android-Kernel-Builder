@@ -20,11 +20,13 @@ jobs:
         run: |
           git clone --recursive --branch dipper-q-oss https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git kernel-source --depth=1
 
-      - name: Fix defconfig
+      - name: Fix defconfig and commit
         working-directory: ./kernel-source
         run: |
+          # 修复栈保护问题
           sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g' arch/arm64/configs/polaris_user_defconfig
           echo "CONFIG_CC_STACKPROTECTOR=y" >> arch/arm64/configs/polaris_user_defconfig
+          # 提交更改以去除 dirty 标记
           git config user.email "action@github.com"
           git config user.name "GitHub Action"
           git add arch/arm64/configs/polaris_user_defconfig
@@ -57,7 +59,9 @@ jobs:
           fi
           rm -rf AnyKernel3/modules
           mkdir -p AnyKernel3/modules/vendor/lib/modules
+          # 复制所有编译出的 .ko 文件
           find out -name "*.ko" -type f -exec cp {} AnyKernel3/modules/vendor/lib/modules/ \;
+          # 修改 anykernel.sh 配置
           sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
           sed -i 's/do.modules=0/do.modules=1/' AnyKernel3/anykernel.sh
           if grep -q "^# module_dir=" AnyKernel3/anykernel.sh; then
@@ -66,6 +70,7 @@ jobs:
             echo "module_dir=vendor/lib/modules" >> AnyKernel3/anykernel.sh
           fi
           sed -i 's/^dtb="dtb"/# dtb="dtb"/' AnyKernel3/anykernel.sh
+          # 追加手动安装模块脚本，确保模块被刷入
           cat >> AnyKernel3/anykernel.sh << 'AKMOD'
           if [ -d "$home/modules/vendor" ]; then
             ui_print "Installing kernel modules...";
