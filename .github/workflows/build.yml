@@ -138,9 +138,15 @@ jobs:
           git add arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           git commit -m "Fix defconfig for GCC 9" || true
 
+          echo "=== Building kernel ==="
           make ${args}
+          echo "=== Building modules ==="
           make ${args} modules
-          make ${args} INSTALL_MOD_PATH=modules_install modules_install
+          echo "=== Installing modules ==="
+          # 使用绝对路径确保 modules_install 在当前目录生成
+          make ${args} INSTALL_MOD_PATH="$(pwd)/modules_install" modules_install
+          echo "=== Modules installed to $(pwd)/modules_install ==="
+          ls -la $(pwd)/modules_install/
 
       - name: "📦 Package AnyKernel3"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
@@ -154,14 +160,13 @@ jobs:
             exit 1
           fi
 
-          # 检查模块
-          echo "====== modules_install tree ======"
-          ls -laR modules_install/ || true
-          MOD_SRC=$(ls -d modules_install/lib/modules/* 2>/dev/null || true)
-          if [ -z "$MOD_SRC" ] || [ ! -d "$MOD_SRC" ]; then
-            echo "ERROR: No modules found in modules_install!"
+          # 检查模块（使用绝对路径）
+          if [ ! -d modules_install/lib/modules ]; then
+            echo "ERROR: modules_install/lib/modules not found!"
+            ls -la modules_install/ || true
             exit 1
           fi
+          MOD_SRC=$(ls -d modules_install/lib/modules/*)
           echo "Modules found in $MOD_SRC"
 
           # 下载 AnyKernel3
@@ -176,21 +181,19 @@ jobs:
             cp ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz AnyKernel3/
           fi
 
-          # 处理模块：清空原有的，重新建立 vendor 模块目录
+          # 处理模块
           rm -rf AnyKernel3/modules
           mkdir -p AnyKernel3/modules/vendor/lib/modules
           cp -r $MOD_SRC/* AnyKernel3/modules/vendor/lib/modules/
 
-          # 修改 anykernel.sh 关键配置
+          # 修改 anykernel.sh
           sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
           sed -i 's/do.modules=0/do.modules=1/' AnyKernel3/anykernel.sh
-          # 确保 module_dir 指向 vendor/lib/modules
           if grep -q "^# module_dir=" AnyKernel3/anykernel.sh; then
             sed -i 's|^# module_dir=.*|module_dir=vendor/lib/modules|' AnyKernel3/anykernel.sh
           else
             echo "module_dir=vendor/lib/modules" >> AnyKernel3/anykernel.sh
           fi
-          # 如果有 dtb 行则注释掉
           sed -i 's/^dtb="dtb"/# dtb="dtb"/' AnyKernel3/anykernel.sh
 
           # 打包
