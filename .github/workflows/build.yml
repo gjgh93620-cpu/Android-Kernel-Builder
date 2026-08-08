@@ -101,7 +101,7 @@ jobs:
           args="-j$(nproc --all)"
           if [ -n "${{ env.OUT_DIR }}" ]; then
             mkdir -p $(pwd)/${{ env.OUT_DIR }}
-            args="$args O=$(pwd)/${{ env.OUT_DIR }}"
+            args="$args O=${{ env.OUT_DIR }}"
           fi
           if [ -n "$ARCH" ]; then
             args="$args ARCH=$ARCH"
@@ -153,7 +153,6 @@ jobs:
           args: ${{ steps.generate-args.outputs.args }}
         run: |
           set -e
-          # 提交修改去除 dirty 标记
           git config user.email "action@github.com"
           git config user.name "GitHub Action"
           git add arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
@@ -169,7 +168,6 @@ jobs:
 
           make ${args} INSTALL_MOD_PATH=modules_install modules_install
 
-          # 检查并列出产物
           echo "=========================================="
           echo "Listing output directory:"
           ls -la ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/ || true
@@ -181,7 +179,7 @@ jobs:
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
           set -e
-          # 先检查 Image 是否存在，否则报错退出
+          # 检查产物是否存在
           if [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image ] && [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz ]; then
             echo "ERROR: Neither Image nor Image.gz found!"
             echo "Contents of boot directory:"
