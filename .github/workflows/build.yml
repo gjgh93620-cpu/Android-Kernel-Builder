@@ -42,7 +42,7 @@ jobs:
       kernelBranch: ${{ matrix.repos.kernelSource.branch }}
       kernelDevice: ${{ matrix.repos.kernelSource.device }}
 
-      # 固定使用你的配置文件
+      # 使用 polaris_user_defconfig
       DEFCONFIG_NAME: polaris_user_defconfig
 
       withKernelSU: ${{ matrix.repos.withKernelSU }}
@@ -50,7 +50,7 @@ jobs:
       - name: "✨ Create working dir"
         run: mkdir -p $kernelDir
 
-      # ===== 步骤修改1：安装依赖时去掉python2，并安装GCC 9 =====
+      # 修改：移除 python2，安装 GCC 9
       - name: "⭐ Install prerequisites"
         run: |
           sudo apt-get update
@@ -144,7 +144,7 @@ jobs:
 
           cat ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
 
-      # ===== 步骤修改2：修复栈保护并去除dirty =====
+      # 新增：修复栈保护，并提交更改去掉 dirty
       - name: "🛠 Fix defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
@@ -163,7 +163,7 @@ jobs:
           echo "PATH Variable: $PATH"
           make ${{ env.args }} ${{ env.DEFCONFIG_NAME }}
 
-      # ===== 步骤修改3：编译内核的同时编译模块 =====
+      # 修改：编译内核+模块
       - name: "🎶 Build kernel & modules"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         env:
@@ -173,49 +173,38 @@ jobs:
           make ${args}
           make ${args} modules
 
-      # ===== 步骤修改4：打包 AnyKernel3 =====
+      # 新增：打包 AnyKernel3
       - name: "📦 Package AnyKernel3"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
           set -e
-          # 检查内核
           if [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image ] && [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz ]; then
             echo "ERROR: No kernel image!"
             exit 1
           fi
 
-          # 下载 AnyKernel3 模板
           wget -q https://github.com/osm0sis/AnyKernel3/archive/refs/heads/master.zip
           unzip -q master.zip
           mv AnyKernel3-master AnyKernel3
 
-          # 放入内核镜像
           if [ -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz ]; then
             cp ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz AnyKernel3/
           else
             gzip -c ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image > AnyKernel3/Image.gz
           fi
 
-          # 复制所有编译出的模块
           rm -rf AnyKernel3/modules
           mkdir -p AnyKernel3/modules/vendor/lib/modules
-          if [ -d ${{ env.OUT_DIR }} ]; then
-            find ${{ env.OUT_DIR }} -name "*.ko" -type f -exec cp {} AnyKernel3/modules/vendor/lib/modules/ \;
-            echo "Modules copied (if any)."
-          fi
+          find ${{ env.OUT_DIR }} -name "*.ko" -type f -exec cp {} AnyKernel3/modules/vendor/lib/modules/ \;
 
-          # 修改 anykernel.sh
           sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
           sed -i 's/do.modules=0/do.modules=1/' AnyKernel3/anykernel.sh
           sed -i "/^# module_dir=/s/^# //" AnyKernel3/anykernel.sh
-          sed -i 's/^dtb="dtb"/# dtb="dtb"/' AnyKernel3/anykernel.sh
-
-          # 确保 module_dir 指向正确位置
           if ! grep -q "module_dir=vendor/lib/modules" AnyKernel3/anykernel.sh; then
             echo "module_dir=vendor/lib/modules" >> AnyKernel3/anykernel.sh
           fi
+          sed -i 's/^dtb="dtb"/# dtb="dtb"/' AnyKernel3/anykernel.sh
 
-          # 追加手动安装脚本
           cat >> AnyKernel3/anykernel.sh << 'AKMOD'
 if [ -d "$home/modules/vendor" ]; then
   ui_print "Installing kernel modules...";
@@ -228,7 +217,6 @@ AKMOD
           cd AnyKernel3
           zip -r ../MIX2S_Kernel_${{ env.kernelBranch }}.zip *
 
-      # ===== 步骤修改5：上传卡刷包 =====
       - name: "💛 Upload AnyKernel3 zip"
         uses: actions/upload-artifact@v4
         with:
