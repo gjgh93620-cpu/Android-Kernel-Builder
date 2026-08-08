@@ -146,44 +146,54 @@ jobs:
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
           set -e
+
+          # 检查内核镜像
           if [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image ] && [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz ]; then
             echo "ERROR: Neither Image nor Image.gz found!"
             ls -la ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/ || true
             exit 1
           fi
 
+          # 检查模块
+          echo "====== modules_install tree ======"
+          ls -laR modules_install/ || true
+          MOD_SRC=$(ls -d modules_install/lib/modules/* 2>/dev/null || true)
+          if [ -z "$MOD_SRC" ] || [ ! -d "$MOD_SRC" ]; then
+            echo "ERROR: No modules found in modules_install!"
+            exit 1
+          fi
+          echo "Modules found in $MOD_SRC"
+
+          # 下载 AnyKernel3
           wget https://github.com/osm0sis/AnyKernel3/archive/refs/heads/master.zip
           unzip master.zip
           mv AnyKernel3-master AnyKernel3
 
+          # 放入内核
           if [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz ]; then
             gzip -c ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image > AnyKernel3/Image.gz
           else
             cp ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz AnyKernel3/
           fi
 
-          # 删除模板自带的空 modules 目录
+          # 处理模块：清空原有的，重新建立 vendor 模块目录
           rm -rf AnyKernel3/modules
+          mkdir -p AnyKernel3/modules/vendor/lib/modules
+          cp -r $MOD_SRC/* AnyKernel3/modules/vendor/lib/modules/
 
-          # 复制内核模块到 vendor 路径
-          MOD_SRC=$(echo modules_install/lib/modules/*)
-          if [ -d "$MOD_SRC" ]; then
-            echo "Found modules in $MOD_SRC"
-            mkdir -p AnyKernel3/modules/vendor/lib/modules
-            cp -r $MOD_SRC/* AnyKernel3/modules/vendor/lib/modules/
-            # 确保 module_dir 设置正确
-            if grep -q "^# module_dir=" AnyKernel3/anykernel.sh; then
-              sed -i 's|^# module_dir=.*|module_dir=vendor/lib/modules|' AnyKernel3/anykernel.sh
-            else
-              echo "module_dir=vendor/lib/modules" >> AnyKernel3/anykernel.sh
-            fi
+          # 修改 anykernel.sh 关键配置
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
+          sed -i 's/do.modules=0/do.modules=1/' AnyKernel3/anykernel.sh
+          # 确保 module_dir 指向 vendor/lib/modules
+          if grep -q "^# module_dir=" AnyKernel3/anykernel.sh; then
+            sed -i 's|^# module_dir=.*|module_dir=vendor/lib/modules|' AnyKernel3/anykernel.sh
           else
-            echo "No modules found, skipping."
+            echo "module_dir=vendor/lib/modules" >> AnyKernel3/anykernel.sh
           fi
-
-          # 注释掉 dtb
+          # 如果有 dtb 行则注释掉
           sed -i 's/^dtb="dtb"/# dtb="dtb"/' AnyKernel3/anykernel.sh
 
+          # 打包
           cd AnyKernel3
           zip -r ../MIX2S_Kernel_${{ env.kernelBranch }}_perfect.zip *
 
