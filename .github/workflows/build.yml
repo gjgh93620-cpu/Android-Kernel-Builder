@@ -16,7 +16,6 @@ jobs:
     steps:
       - name: "😄 Checkout"
         uses: actions/checkout@v4
-
       - name: "😆 Generate Matrix"
         id: generate-matrix
         run: |
@@ -29,8 +28,7 @@ jobs:
   Build-Kernel:
     name: "🐎 Build kernel"
     runs-on: ubuntu-22.04
-    needs:
-      - Set-repos
+    needs: Set-repos
     strategy:
       max-parallel: 2
       fail-fast: false
@@ -38,14 +36,11 @@ jobs:
         repos: ${{ fromJSON(needs.Set-repos.outputs.repos) }}
     env:
       kernelDir: ${{ matrix.repos.kernelSource.name }}_${{ matrix.repos.kernelSource.device }}
-
       kernelName: ${{ matrix.repos.kernelSource.name }}
       kernelRepo: ${{ matrix.repos.kernelSource.repo }}
       kernelBranch: ${{ matrix.repos.kernelSource.branch }}
       kernelDevice: ${{ matrix.repos.kernelSource.device }}
-
       DEFCONFIG_NAME: polaris_user_defconfig
-
       withKernelSU: ${{ matrix.repos.withKernelSU }}
     steps:
       - name: "✨ Create working dir"
@@ -70,7 +65,6 @@ jobs:
           toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
         run: |
           toolchains_num="$(echo $toolchains | jq 'length')"
-          echo $toolchains_num
           for ((i=0;i<toolchains_num;i++)); do
             name=$(echo $toolchains | jq -r ".[$i].name")
             repo=$(echo $toolchains | jq -r ".[$i].repo")
@@ -79,7 +73,6 @@ jobs:
             echo "$(pwd)/$name/" >> $GITHUB_PATH
             echo "$(pwd)/$name/bin" >> $GITHUB_PATH
           done
-
           echo "PATH Variable: $PATH"
 
       - name: "😎 Set args"
@@ -103,24 +96,12 @@ jobs:
             mkdir -p $(pwd)/${{ env.OUT_DIR }}
             args="$args O=${{ env.OUT_DIR }}"
           fi
-          if [ -n "$ARCH" ]; then
-            args="$args ARCH=$ARCH"
-          fi
-          if [ -n "$CROSS_COMPILE" ]; then
-            args="$args CROSS_COMPILE=$CROSS_COMPILE"
-          fi
-          if [ -n "$CLANG_TRIPLE" ]; then
-            args="$args CLANG_TRIPLE=$CLANG_TRIPLE"
-          fi
-          if [ -n "$CROSS_COMPILE_COMPAT" ]; then
-            args="$args CROSS_COMPILE_ARM32=$CROSS_COMPILE_COMPAT"
-          fi
-          if [ -n "$AR" ]; then
-            args="$args AR=$AR"
-          fi
-          if [ -n "$CC" ]; then
-            args="$args CC=$CC"
-          fi
+          if [ -n "$ARCH" ]; then args="$args ARCH=$ARCH"; fi
+          if [ -n "$CROSS_COMPILE" ]; then args="$args CROSS_COMPILE=$CROSS_COMPILE"; fi
+          if [ -n "$CLANG_TRIPLE" ]; then args="$args CLANG_TRIPLE=$CLANG_TRIPLE"; fi
+          if [ -n "$CROSS_COMPILE_COMPAT" ]; then args="$args CROSS_COMPILE_ARM32=$CROSS_COMPILE_COMPAT"; fi
+          if [ -n "$AR" ]; then args="$args AR=$AR"; fi
+          if [ -n "$CC" ]; then args="$args CC=$CC"; fi
           echo "args=$args" >> $GITHUB_OUTPUT
 
       - name: "😋 Update KernelSU"
@@ -134,7 +115,7 @@ jobs:
           echo -e "\nCONFIG_HAVE_KPROBES=y" >> ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           echo -e "\nCONFIG_KPROBE_EVENTS=y" >> ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
 
-      - name: "🛠 Fix defconfig & prepare"
+      - name: "🛠 Fix defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
           sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g' arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
@@ -144,8 +125,7 @@ jobs:
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         env:
           args: ${{ steps.generate-args.outputs.args }}
-        run: |
-          make ${{ env.args }} ${{ env.DEFCONFIG_NAME }}
+        run: make ${{ env.args }} ${{ env.DEFCONFIG_NAME }}
 
       - name: "🎶 Build kernel & modules"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
@@ -158,31 +138,16 @@ jobs:
           git add arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           git commit -m "Fix defconfig for GCC 9" || true
 
-          echo "Starting kernel build..."
           make ${args}
-          echo "Kernel build completed."
-
-          echo "Starting modules build..."
           make ${args} modules
-          echo "Modules build completed."
-
           make ${args} INSTALL_MOD_PATH=modules_install modules_install
-
-          echo "=========================================="
-          echo "Listing output directory:"
-          ls -la ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/ || true
-          echo "Searching for Image files:"
-          find ${{ env.OUT_DIR }} -name "Image*" || true
-          echo "=========================================="
 
       - name: "📦 Package AnyKernel3"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
           set -e
-          # 检查产物是否存在
           if [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image ] && [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz ]; then
             echo "ERROR: Neither Image nor Image.gz found!"
-            echo "Contents of boot directory:"
             ls -la ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/ || true
             exit 1
           fi
@@ -192,17 +157,31 @@ jobs:
           mv AnyKernel3-master AnyKernel3
 
           if [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz ]; then
-            echo "Image.gz not found, compressing Image..."
             gzip -c ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image > AnyKernel3/Image.gz
           else
             cp ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz AnyKernel3/
           fi
 
-          mkdir -p AnyKernel3/modules/vendor/lib/modules
-          if [ -d modules_install/lib/modules ]; then
-            cp -r modules_install/lib/modules/* AnyKernel3/modules/vendor/lib/modules/
+          # 删除模板自带的空 modules 目录
+          rm -rf AnyKernel3/modules
+
+          # 复制内核模块到 vendor 路径
+          MOD_SRC=$(echo modules_install/lib/modules/*)
+          if [ -d "$MOD_SRC" ]; then
+            echo "Found modules in $MOD_SRC"
+            mkdir -p AnyKernel3/modules/vendor/lib/modules
+            cp -r $MOD_SRC/* AnyKernel3/modules/vendor/lib/modules/
+            # 确保 module_dir 设置正确
+            if grep -q "^# module_dir=" AnyKernel3/anykernel.sh; then
+              sed -i 's|^# module_dir=.*|module_dir=vendor/lib/modules|' AnyKernel3/anykernel.sh
+            else
+              echo "module_dir=vendor/lib/modules" >> AnyKernel3/anykernel.sh
+            fi
+          else
+            echo "No modules found, skipping."
           fi
 
+          # 注释掉 dtb
           sed -i 's/^dtb="dtb"/# dtb="dtb"/' AnyKernel3/anykernel.sh
 
           cd AnyKernel3
