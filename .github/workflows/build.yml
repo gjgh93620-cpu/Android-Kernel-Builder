@@ -138,15 +138,11 @@ jobs:
           git add arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           git commit -m "Fix defconfig for GCC 9" || true
 
-          echo "=== Building kernel ==="
           make ${args}
-          echo "=== Building modules ==="
           make ${args} modules
-          echo "=== Installing modules ==="
-          # 使用绝对路径确保 modules_install 在当前目录生成
           make ${args} INSTALL_MOD_PATH="$(pwd)/modules_install" modules_install
-          echo "=== Modules installed to $(pwd)/modules_install ==="
-          ls -la $(pwd)/modules_install/
+          echo "=== Modules installed ==="
+          ls -laR modules_install/
 
       - name: "📦 Package AnyKernel3"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
@@ -155,36 +151,43 @@ jobs:
 
           # 检查内核镜像
           if [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image ] && [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz ]; then
-            echo "ERROR: Neither Image nor Image.gz found!"
-            ls -la ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/ || true
+            echo "ERROR: No kernel image found!"
             exit 1
           fi
 
-          # 检查模块（使用绝对路径）
-          if [ ! -d modules_install/lib/modules ]; then
-            echo "ERROR: modules_install/lib/modules not found!"
-            ls -la modules_install/ || true
+          # 检查模块目录
+          MOD_DIR="modules_install/lib/modules"
+          if [ ! -d "$MOD_DIR" ]; then
+            echo "ERROR: $MOD_DIR not found!"
             exit 1
           fi
-          MOD_SRC=$(ls -d modules_install/lib/modules/*)
-          echo "Modules found in $MOD_SRC"
+          MOD_VER=$(ls "$MOD_DIR")
+          MOD_SRC="$MOD_DIR/$MOD_VER"
+          echo "Module source: $MOD_SRC"
 
           # 下载 AnyKernel3
-          wget https://github.com/osm0sis/AnyKernel3/archive/refs/heads/master.zip
-          unzip master.zip
+          wget -q https://github.com/osm0sis/AnyKernel3/archive/refs/heads/master.zip
+          unzip -q master.zip
           mv AnyKernel3-master AnyKernel3
 
-          # 放入内核
-          if [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz ]; then
-            gzip -c ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image > AnyKernel3/Image.gz
-          else
+          # 放入内核镜像
+          if [ -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz ]; then
             cp ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz AnyKernel3/
+          else
+            gzip -c ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image > AnyKernel3/Image.gz
           fi
 
-          # 处理模块
+          # 清空 AnyKernel3 自带的 modules，重新创建 vendor 模块目录
           rm -rf AnyKernel3/modules
           mkdir -p AnyKernel3/modules/vendor/lib/modules
-          cp -r $MOD_SRC/* AnyKernel3/modules/vendor/lib/modules/
+
+          # 复制 .ko 文件和模块元数据文件，排除 build/source 等符号链接
+          find "$MOD_SRC" -maxdepth 1 -type f -name "*.ko" -exec cp {} AnyKernel3/modules/vendor/lib/modules/ \;
+          for f in modules.alias modules.dep modules.symbols modules.order modules.builtin; do
+            if [ -f "$MOD_SRC/$f" ]; then
+              cp "$MOD_SRC/$f" AnyKernel3/modules/vendor/lib/modules/
+            fi
+          done
 
           # 修改 anykernel.sh
           sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
@@ -196,7 +199,6 @@ jobs:
           fi
           sed -i 's/^dtb="dtb"/# dtb="dtb"/' AnyKernel3/anykernel.sh
 
-          # 打包
           cd AnyKernel3
           zip -r ../MIX2S_Kernel_${{ env.kernelBranch }}_perfect.zip *
 
