@@ -1,32 +1,34 @@
-name: "Build MIX 2S Kernel"
-on:
-  workflow_dispatch:
+name: "Build kernels"
 
 env:
   CONFIGURATION: "repos.json"
   OUT_DIR: "out"
 
+on:
+  workflow_dispatch:
+
 jobs:
   Set-repos:
-    name: "Parse repos.json"
-    runs-on: ubuntu-22.04
+    name: "🐂 Parse repos.json"
+    runs-on: ubuntu-latest
     outputs:
       repos: ${{ steps.generate-matrix.outputs.repos }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Generate Matrix
+      - name: "😄 Checkout"
+        uses: actions/checkout@v3
+
+      - name: "😆 Generate Matrix"
         id: generate-matrix
         run: |
-          {
-            echo 'repos<<EOF'
-            cat ${{ env.CONFIGURATION }}
-            echo 'EOF'
-          } >> $GITHUB_OUTPUT
+          echo "repos<<EOF" >> $GITHUB_OUTPUT
+          cat  ${{ env.CONFIGURATION }} >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
   Build-Kernel:
-    name: "Build kernel"
-    runs-on: ubuntu-22.04
-    needs: Set-repos
+    name: "🐎 Build kernel"
+    runs-on: ubuntu-latest
+    needs:
+      - Set-repos
     strategy:
       max-parallel: 2
       fail-fast: false
@@ -34,35 +36,36 @@ jobs:
         repos: ${{ fromJSON(needs.Set-repos.outputs.repos) }}
     env:
       kernelDir: ${{ matrix.repos.kernelSource.name }}_${{ matrix.repos.kernelSource.device }}
+
       kernelName: ${{ matrix.repos.kernelSource.name }}
       kernelRepo: ${{ matrix.repos.kernelSource.repo }}
       kernelBranch: ${{ matrix.repos.kernelSource.branch }}
       kernelDevice: ${{ matrix.repos.kernelSource.device }}
-      DEFCONFIG_NAME: polaris_user_defconfig
+
+      DEFCONFIG_NAME: ${{ matrix.repos.kernelSource.device }}_defconfig
+
       withKernelSU: ${{ matrix.repos.withKernelSU }}
     steps:
-      - name: Create working dir
+      - name: "✨ Create working dir"
         run: mkdir -p $kernelDir
 
-      - name: Install prerequisites & GCC 9
+      - name: "⭐ Install prerequisites"
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 libarchive-tools gcc-9 g++-9
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 100
-          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 100
-          gcc --version
+          sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python2 python3 libarchive-tools
 
-      - name: Clone kernel source
+      - name: "🌟 Clone kernel source => (${{ env.kernelRepo }})"
         working-directory: ./${{ env.kernelDir }}
         run: |
           git clone --recursive --branch $kernelBranch $kernelRepo $kernelName --depth=1
 
-      - name: Get toolchains
+      - name: "💫 Get toolchains"
         working-directory: ./${{ env.kernelDir }}
         env:
           toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
         run: |
           toolchains_num="$(echo $toolchains | jq 'length')"
+          echo $toolchains_num
           for ((i=0;i<toolchains_num;i++)); do
             name=$(echo $toolchains | jq -r ".[$i].name")
             repo=$(echo $toolchains | jq -r ".[$i].repo")
@@ -71,14 +74,17 @@ jobs:
             echo "$(pwd)/$name/" >> $GITHUB_PATH
             echo "$(pwd)/$name/bin" >> $GITHUB_PATH
           done
+
           echo "PATH Variable: $PATH"
 
-      - name: Set args
+      - name: "😎 Set args"
         id: generate-args
         working-directory: ./${{ env.kernelDir }}
         env:
           params: "${{ toJSON(matrix.repos.params) }}"
+          THREAD: $(nproc --all)
         run: |
+          echo "PATH Variable: $PATH"
           ARCH=$(echo $params | jq -r ".ARCH")
           CROSS_COMPILE=$(echo $params | jq -r ".CROSS_COMPILE")
           CROSS_COMPILE_COMPAT=$(echo $params | jq -r ".CROSS_COMPILE_COMPAT")
@@ -92,99 +98,91 @@ jobs:
           args="-j$(nproc --all)"
           if [ -n "${{ env.OUT_DIR }}" ]; then
             mkdir -p $(pwd)/${{ env.OUT_DIR }}
-            args="$args O=${{ env.OUT_DIR }}"
+            args="$args O=$(pwd)/${{ env.OUT_DIR }}"
           fi
-          if [ -n "$ARCH" ]; then args="$args ARCH=$ARCH"; fi
-          if [ -n "$CROSS_COMPILE" ]; then args="$args CROSS_COMPILE=$CROSS_COMPILE"; fi
-          if [ -n "$CLANG_TRIPLE" ]; then args="$args CLANG_TRIPLE=$CLANG_TRIPLE"; fi
-          if [ -n "$CROSS_COMPILE_COMPAT" ]; then args="$args CROSS_COMPILE_ARM32=$CROSS_COMPILE_COMPAT"; fi
-          if [ -n "$AR" ]; then args="$args AR=$AR"; fi
-          if [ -n "$CC" ]; then args="$args CC=$CC"; fi
+          if [ -n "$ARCH" ]; then
+            args="$args ARCH=$ARCH"
+          fi
+          if [ -n "$CROSS_COMPILE" ]; then
+            args="$args CROSS_COMPILE=$CROSS_COMPILE"
+          fi
+          if [ -n "$CLANG_TRIPLE" ]; then
+            args="$args CLANG_TRIPLE=$CLANG_TRIPLE"
+          fi
+          if [ -n "$CROSS_COMPILE_COMPAT" ]; then
+            args="$args CROSS_COMPILE_ARM32=$CROSS_COMPILE_COMPAT"
+          fi
+          if [ -n "$AR" ]; then
+            args="$args AR=$AR"
+          fi
+          if [ -n "$CC" ]; then
+            args="$args CC=$CC"
+          fi
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: Fix defconfig
+      - name: "😋 Update KernelSU"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
+        if: ${{ env.withKernelSU == 'true' }}
         run: |
-          sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g' arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_CC_STACKPROTECTOR=y" >> arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          if [ -d "./KernelSU" ]; then
+            rm -rf "./KernelSU"
+          fi
+          if [ -d "./drivers/kernelsu" ]; then
+            rm -rf "./drivers/kernelsu"
+          fi
 
-      - name: Make defconfig
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+
+          echo -e "\nCONFIG_KPROBES=y" >> ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          echo -e "\nCONFIG_HAVE_KPROBES=y" >> ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          echo -e "\nCONFIG_KPROBE_EVENTS=y" >> ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+
+          cat ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+
+      - name: "👍 Make defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         env:
           args: ${{ steps.generate-args.outputs.args }}
-        run: make ${{ env.args }} ${{ env.DEFCONFIG_NAME }}
+        run: |
+          echo "PATH Variable: $PATH"
+          make ${{ env.args }} ${{ env.DEFCONFIG_NAME }}
 
-      - name: Build kernel & modules
+      - name: "🎶 Build kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         env:
           args: ${{ steps.generate-args.outputs.args }}
         run: |
-          set -e
-          git config user.email "action@github.com"
-          git config user.name "GitHub Action"
-          git add arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          git commit -m "Fix defconfig for GCC 9" || true
-
+          echo "PATH Variable: $PATH"
           make ${args}
-          make ${args} modules
-          echo "Modules compiled:"
-          find ${{ env.OUT_DIR }} -name "*.ko" -type f
 
-      - name: Package AnyKernel3
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        run: |
-          set -e
-
-          if [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image ] && [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz ]; then
-            echo "ERROR: No kernel image!"
-            exit 1
-          fi
-
-          wget -q https://github.com/osm0sis/AnyKernel3/archive/refs/heads/master.zip
-          unzip -q master.zip
-          mv AnyKernel3-master AnyKernel3
-
-          if [ -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz ]; then
-            cp ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz AnyKernel3/
-          else
-            gzip -c ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image > AnyKernel3/Image.gz
-          fi
-
-          rm -rf AnyKernel3/modules
-          mkdir -p AnyKernel3/modules/vendor/lib/modules
-
-          KO_COUNT=0
-          while IFS= read -r -d '' ko; do
-            cp -v "$ko" AnyKernel3/modules/vendor/lib/modules/
-            ((KO_COUNT++))
-          done < <(find ${{ env.OUT_DIR }} -name "*.ko" -type f -print0)
-
-          echo "Copied ${KO_COUNT} .ko files."
-
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
-          sed -i 's/do.modules=0/do.modules=1/' AnyKernel3/anykernel.sh
-          if grep -q "^# module_dir=" AnyKernel3/anykernel.sh; then
-            sed -i 's|^# module_dir=.*|module_dir=vendor/lib/modules|' AnyKernel3/anykernel.sh
-          else
-            echo "module_dir=vendor/lib/modules" >> AnyKernel3/anykernel.sh
-          fi
-          sed -i 's/^dtb="dtb"/# dtb="dtb"/' AnyKernel3/anykernel.sh
-
-          cat >> AnyKernel3/anykernel.sh << 'AKMOD'
-if [ -d "$home/modules/vendor" ]; then
-  ui_print "Installing kernel modules...";
-  cp -rf $home/modules/vendor/lib/modules/* /vendor/lib/modules/;
-  chmod 644 /vendor/lib/modules/*.ko;
-  chown 0:0 /vendor/lib/modules/;
-fi
-AKMOD
-
-          cd AnyKernel3
-          zip -r ../MIX2S_Kernel_${{ env.kernelBranch }}.zip *
-
-      - name: Upload AnyKernel3 zip
-        uses: actions/upload-artifact@v4
+      - name: "💛 Upload Image"
+        uses: actions/upload-artifact@v3
         with:
-          name: MIX2S_Kernel_${{ env.kernelBranch }}
-          path: ${{ env.kernelDir }}/${{ env.kernelName }}/MIX2S_Kernel_${{ env.kernelBranch }}.zip
+          name: Image(${{ env.kernelDevice }}-${{ env.kernelName }}-${{ env.kernelBranch }})
+          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: "💙 Upload Image.gz"
+        uses: actions/upload-artifact@v3
+        with:
+          name: Image.gz(${{ env.kernelDevice }}-${{ env.kernelName }}-${{ env.kernelBranch }})
+          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: "💜 Upload dtb"
+        uses: actions/upload-artifact@v3
+        with:
+          name: dtb(${{ env.kernelDevice }}-${{ env.kernelName }}-${{ env.kernelBranch }})
+          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/dtb
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: "❤️ Upload dtbo.img"
+        uses: actions/upload-artifact@v3
+        with:
+          name: dtbo.img(${{ env.kernelDevice }}-${{ env.kernelName }}-${{ env.kernelBranch }})
+          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/dtbo.img
+          if-no-files-found: ignore
           retention-days: 7
