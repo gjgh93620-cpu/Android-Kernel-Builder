@@ -42,7 +42,7 @@ jobs:
       kernelRepo: ${{ matrix.repos.kernelSource.repo }}
       kernelBranch: ${{ matrix.repos.kernelSource.branch }}
       kernelDevice: ${{ matrix.repos.kernelSource.device }}
-      DEFCONFIG_NAME: polaris_user_defconfig   # 固定为你的配置文件
+      DEFCONFIG_NAME: polaris_user_defconfig   # 你的配置文件
       withKernelSU: ${{ matrix.repos.withKernelSU }}
     steps:
       - name: "✨ Create working dir"
@@ -166,31 +166,34 @@ jobs:
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
           set -e
+          # 检查内核存在
           if [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image ] && [ ! -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz ]; then
             echo "ERROR: No kernel image found!"
             exit 1
           fi
 
+          # 下载 AnyKernel3
           wget -q https://github.com/osm0sis/AnyKernel3/archive/refs/heads/master.zip
           unzip -q master.zip
           mv AnyKernel3-master AnyKernel3
 
-          # 放入内核
+          # 放入内核镜像
           if [ -f ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz ]; then
             cp ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz AnyKernel3/
           else
             gzip -c ${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image > AnyKernel3/Image.gz
           fi
 
-          # 处理模块
+          # 模块处理（极简）：删除原有 modules，然后直接把 out 目录下所有 .ko 复制过来
           rm -rf AnyKernel3/modules
           mkdir -p AnyKernel3/modules/vendor/lib/modules
-          KO_COUNT=0
-          while IFS= read -r -d '' ko; do
-            cp -v "$ko" AnyKernel3/modules/vendor/lib/modules/
-            ((KO_COUNT++))
-          done < <(find ${{ env.OUT_DIR }} -name "*.ko" -type f -print0)
-          echo "Copied ${KO_COUNT} .ko files."
+          # 直接拷贝（如果没有任何 .ko 文件，cp 命令会失败但不中断，我们先检查一下）
+          if ls ${{ env.OUT_DIR }}/**/*.ko 1> /dev/null 2>&1; then
+            cp ${{ env.OUT_DIR }}/**/*.ko AnyKernel3/modules/vendor/lib/modules/
+            echo "Modules copied."
+          else
+            echo "No .ko files found, skipping module copy."
+          fi
 
           # 修改 anykernel.sh
           sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
@@ -202,7 +205,7 @@ jobs:
           fi
           sed -i 's/^dtb="dtb"/# dtb="dtb"/' AnyKernel3/anykernel.sh
 
-          # 追加手动安装模块脚本
+          # 手动安装模块脚本（确保刷入）
           cat >> AnyKernel3/anykernel.sh << 'AKMOD'
 if [ -d "$home/modules/vendor" ]; then
   ui_print "Installing kernel modules...";
