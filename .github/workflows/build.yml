@@ -1,4 +1,4 @@
-name: "Build MIX 2S Kernel (Open Source Config)"
+name: "Build MIX 2S Kernel"
 
 env:
   CONFIGURATION: "repos.json"
